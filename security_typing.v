@@ -740,7 +740,50 @@ Qed.
 
 (*#########################end###############################*)
 
+(*######Properties########*)
+(**
+There are two important type safety properties we want to investigate,
+a. Strong Progress
+ forall Gamma T t t' st, 
+ has_type Gamma t T ->
+ value t \/ exists t', t / st ==> t' / st
+That is well-typed terms never get stuck
 
+b. type preservation
+ forall Gamma t t' st T,
+ has_type Gamma t T ->
+ t / st ==> t' / st ->
+ has_type Gamma t' T
+  
+*)
+(*############type preserversion############*)
+(**
+According to the above specification, [Gamma : context] stands for the typing
+context for both free and bounded variables. Moreover before the reduction
+of any term, it is actually the typing context for free-variables.
+It follows that the typing context  has to meet the following condition,
+
+a. at the beginning of the reduction, [Gamma] must indicate the types of
+   its corresponding value context [st : store].
+
+Now as reduction in progress, [Gamma] always stay the same for 
+in our simple language we assume that we begin with a fixed set of 
+free-variables whose values and types are not to be changed.
+Therefore it is clear that if we begin with a perfectly related typing context
+we will end up with the same typing context after reduction.
+
+Clearly we should specify preservation as follows,
+forall Gamma t t' st T,
+store_well_typed Gamma st ->
+has_type Gamma t T ->
+t / st ==> t' / st ->
+has_type Gamma t' T
+)
+
+*)
+(*##############end#########################*)
+
+(*###########end##########*)
 
 
 
