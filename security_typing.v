@@ -136,7 +136,7 @@ b'.    (\x:int^H. (\y:int^L. y)^L )^H (const H 2)
    ==> (\y:int^L.y)^(L^H)
    ==> (\y:int^L.y)^H
 c.     (\x:int^L.x)^H (y:int^L)
-   ==> join H y
+   ==> join H (lookup y st)
    note that [y] is a free variable of type [int^L] and after application
    the label of the value stored in [y] should be the join of the that of the
    function and that of the value
@@ -166,17 +166,15 @@ This immediately implies that in our system, we have three sorts of values:
 3. restricted abstractions
    [tabs (Id n) (T:Ty) body (b:Sec)] where
    [body] itself is a value
-   reduction stops at abstraction only when the body of the 
-   abstraction itself is a value
+   reduction stops at abstraction
 *)
 
 Inductive value : tm -> Prop :=
-| v_v : forall n o,
-        value (tvar  o (Id n))
+(**| v_v : forall n o,
+        value (tvar  o (Id n)) *)
 | v_c : forall b n,
         value (tcon n b)
 | v_f : forall n T e b,
-        value e ->
         value (tabs (Id n) T e b).
 
 (*##########################end##############################*)
@@ -195,45 +193,45 @@ Before specifying [subst] we define the following
 auxiliary function [update],
 *)
 
-Fixpoint update (e:tm) (b:Sec): tm :=
+Fixpoint upgrade (e:tm) (b:Sec): tm :=
  match b with
  | L => e
  | H => match e with
         | tvar _ x => tvar (Some H) x
         | tcon n _ => tcon n H
         | tabs x T t _ => tabs x T t H
-        | tapp f e => tapp (update f H) e
+        | tapp f e => tapp (upgrade f H) e
         end
  end.
 
 (*#######tests of [update]##################*)
-Example test_update_1:
-update (tvar None (Id 0)) H = tvar (Some H) (Id 0).
+Example test_upgrade_1:
+upgrade (tvar None (Id 0)) H = tvar (Some H) (Id 0).
 Proof. simpl. reflexivity. Qed.
-Example test_update_2:
-update (tvar (Some L) (Id 0)) H = tvar (Some H) (Id 0).
+Example test_upgrade_2:
+upgrade (tvar (Some L) (Id 0)) H = tvar (Some H) (Id 0).
 Proof. simpl. reflexivity. Qed.
-Example test_update_3:
-update (tvar None (Id 0)) L = tvar None (Id 0).
+Example test_upgrade_3:
+upgrade (tvar None (Id 0)) L = tvar None (Id 0).
 Proof. simpl. reflexivity. Qed.
-Example test_update_4:
-update (tcon 1 L) H = tcon 1 H.
+Example test_upgrade_4:
+upgrade (tcon 1 L) H = tcon 1 H.
 Proof. simpl. reflexivity. Qed.
-Example test_update_5:
-update (tcon 1 L) L = tcon 1 L.
+Example test_upgrade_5:
+upgrade (tcon 1 L) L = tcon 1 L.
 Proof. simpl. reflexivity. Qed.
-Example test_update_6:
-update (tabs (Id 0) (an_b int H) (tvar None (Id 0)) L) H = tabs (Id 0) (an_b int H) (tvar None (Id 0)) H.
+Example test_upgrade_6:
+upgrade (tabs (Id 0) (an_b int H) (tvar None (Id 0)) L) H = tabs (Id 0) (an_b int H) (tvar None (Id 0)) H.
 Proof. simpl. reflexivity. Qed.
-Example test_update_7:
-update (tabs (Id 0) (an_b int H) (tvar None (Id 0)) L) L = tabs (Id 0) (an_b int H) (tvar None (Id 0)) L.
+Example test_upgrade_7:
+upgrade (tabs (Id 0) (an_b int H) (tvar None (Id 0)) L) L = tabs (Id 0) (an_b int H) (tvar None (Id 0)) L.
 Proof. simpl. reflexivity. Qed.
-Example test_update_8:
-update (tapp (tabs (Id 0) (an_b int L) (tvar None (Id 0)) L) (tcon 1 L)) H =
+Example test_upgrade_8:
+upgrade (tapp (tabs (Id 0) (an_b int L) (tvar None (Id 0)) L) (tcon 1 L)) H =
         tapp (tabs (Id 0) (an_b int L) (tvar None (Id 0)) H) (tcon 1 L).
 Proof. simpl. reflexivity. Qed.
-Example test_updaet_9:
-update (tapp (tabs (Id 0) (an_b int L) (tvar None (Id 0)) L)(tcon 1 L)) L =
+Example test_upgrade_9:
+upgrade (tapp (tabs (Id 0) (an_b int L) (tvar None (Id 0)) L)(tcon 1 L)) L =
         tapp (tabs (Id 0) (an_b int L) (tvar None (Id 0)) L)(tcon 1 L).
 Proof. simpl. reflexivity. Qed.
 (*################end############################*)
@@ -276,6 +274,77 @@ Proof. simpl. reflexivity. Qed.
 
 (*########################end################################*)
 
+(*#########################free-variables#############*)
+(**
+Note that since we have to deal with free variables here, we
+must specify the values of these free variables appearing in
+our terms.
+There are two ways of doing it,
+a. referring to [Imp.v]
+   we can specify a partial function which takes free variables as inputs and
+   returns their corresponding values which are the terms in the language,
+   st := id -> tm
+b. referring to [Reference.v]
+   we can also define a list of terms of the language and each one of them
+   corresponding to a specific free variable according to its id,
+   st := list tm
+
+We use the former method to deal with free variables.
+In what follows, "st" stands for the "value context" for all free variables,
+*)
+Definition VStore := id -> option tm.
+
+Definition empty_store : VStore := 
+  fun _ => None.
+ 
+Definition update (st : VStore) (X:id) (e : option tm) : VStore :=
+  fun X' => if beq_id X X' then e else st X'.
+
+(*#######some useful theorems regarding [update]#########*)
+Theorem update_eq : forall e X st,
+  (update st X e) X = e.
+Proof.
+intros. unfold update. rewrite<-beq_id_refl. reflexivity. 
+Qed.
+Theorem update_neq : forall V2 V1 e st,
+  beq_id V2 V1 = false ->
+  (update st V2 e) V1 = (st V1).
+Proof.
+intros. unfold update. rewrite H0. reflexivity.
+Qed.
+Theorem update_shadow : forall e1 e2 x1 x2 (f : VStore),
+   (update  (update f x2 e1) x2 e2) x1 = (update f x2 e2) x1.
+Proof.
+intros. unfold update. destruct (beq_id x2 x1). reflexivity.
+reflexivity.
+Qed.
+Theorem update_same : forall e1 x1 x2 (f : VStore),
+  f x1 = e1 ->
+  (update f x1 e1) x2 = f x2.
+Proof.
+intros. unfold update. remember (beq_id x1 x2) as D. destruct D.
+Case ("true"). apply beq_id_eq in HeqD. subst. reflexivity.
+reflexivity.
+Qed. 
+Theorem update_permute : forall e1 e2 x1 x2 x3 f,
+  beq_id x2 x1 = false -> 
+  (update (update f x2 e1) x1 e2) x3 = (update (update f x1 e2) x2 e1) x3.
+Proof.
+intros. unfold update. remember (beq_id x1 x3) as D1. remember (beq_id x2 x3) as D2.
+destruct D1.
+Case ("D1=true"). destruct D2.
+      SCase ("D2=true"). apply beq_id_false_not_eq in H0.  apply beq_id_eq in HeqD1.
+                         apply beq_id_eq in HeqD2. rewrite<-HeqD2 in HeqD1.
+                         unfold not in H0. symmetry in HeqD1. apply H0 in HeqD1.
+                         inversion HeqD1.
+      SCase ("D2=false"). reflexivity.
+Case ("D1=false"). destruct D2.
+      SCase ("D2=true"). reflexivity.
+      SCase ("D2=false"). reflexivity.
+Qed.
+
+(*###########################end######################*)
+
 (*######small-step evaluation - part one#######################*)
 (**
 Note now we are ready to specify the small-step evaluation of the terms in
@@ -303,34 +372,64 @@ b. tapp
      (tcon 1 L)
 ==> tcon 1 H
 *)
-Inductive step_one : tm -> tm -> Prop :=
-  | st_appabs : forall n T e b v2,
-    value v2 ->
-    value e  ->
-    tapp (tabs (Id n) T e b) v2 ==> update ([(Id n) := v2]e) b
-  | st_app1 : forall t1 t1' t2,
-        t1 ==> t1' ->
-        tapp t1 t2 ==> tapp t1' t2
-  | st_app2 : forall v1 t2 t2',
-        value v1 ->                      
-        t2 ==> t2' ->
-        tapp v1 t2 ==> tapp v1 t2'
+(**
+We define one auxiliary function "extract" which
+upon receiving a term of type [option tm] gives us
+the term without [Some] label attached to it,
+*)
+Definition extract (a : option tm) : tm :=
+match a with
+| Some e => e
+| None   => tcon 1 L
+end.
+Inductive step : (tm * VStore) -> (tm * VStore) -> Prop :=
+| st_varNone: forall n st,
+  (exists e:tm, st (Id n) = Some e ) ->
+  tvar None (Id n) / st ==> extract (st (Id n)) / st
+| st_varLH: forall n st b,
+  (exists e:tm, st (Id n) = Some e ) ->
+  tvar (Some b) (Id n) / st ==> upgrade (extract (st (Id n))) b / st
+| st_appabs: forall x T e b v st,
+  value v ->
+  tapp (tabs x T e b) v / st ==> upgrade ([x := v]e) b / st
+| st_app1: forall t1 t1' t2 st,
+  t1 / st ==> t1' / st ->
+  tapp t1 t2 / st ==> tapp t1' t2 / st
+| st_app2: forall v1 t2 t2' st,
+  value v1 ->
+  t2 / st ==> t2' / st ->
+  tapp v1 t2 / st ==> tapp v1 t2' / st
 
-  where " t '==>' t' " := (step_one t t').
+where "t1 '/' st1 '==>' t2 '/' st2" := (step (t1,st1) (t2,st2)).
 
-Definition multistep := multi step_one.
-Notation " t '==>*' t' " := (multistep t t') (at level 40).
+
+Definition multistep := (multi step).
+Notation "t1 '/' st '==>*' t2 '/' st'" := (multistep (t1,st) (t2,st')) 
+  (at level 40, st at level 39, t2 at level 39).
 
 (*##############tests of [step_one]###########*)
 Example test_step_one_a:
-tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tcon 1 L)
-==> tcon 1 H.
-Proof. apply st_appabs. apply v_c. apply v_v. Qed.
+tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tcon 1 L) / empty_store
+==> tcon 1 H / empty_store.
+Proof. apply st_appabs. apply v_c. Qed.
 Example test_step_one_b:
-tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tvar None (Id 0))
-==> tvar (Some H) (Id 0).
-Proof. apply st_appabs. apply v_v. apply v_v. Qed.
-Example test_st_one_c:
+tvar None (Id 0) / update empty_store (Id 0) (Some (tcon 1 H)) ==>
+tcon 1 H / update empty_store (Id 0) (Some (tcon 1 H)).
+Proof. apply st_varNone. exists (tcon 1 H). rewrite->update_eq.
+       reflexivity. Qed.
+Example test_step_one_c:
+tvar (Some H) (Id 0) / update empty_store (Id 0) (Some (tcon 1 L)) ==>
+tcon 1 H / update empty_store (Id 0) (Some (tcon 1 L)).
+Proof. apply st_varLH. exists (tcon 1 L). apply update_eq.
+       Qed.
+Example test_step_one_d:
+tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tvar None (Id 0)) / update empty_store (Id 0) (Some (tcon 1 L))
+==>* tcon 1 H / update empty_store (Id 0) (Some (tcon 1 L)).
+Proof. apply multi_step with (y:= (tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tcon 1 L) , update empty_store (Id 0) (Some (tcon 1 L)))).
+ apply st_app2. apply v_f. apply st_varNone. exists (tcon 1 L). apply update_eq.
+apply multi_step with (y:=(upgrade ([Id 0 := tcon 1 L](tvar None (Id 0))) H , update empty_store (Id 0) (Some (tcon 1 L)))).
+apply st_appabs. apply v_c. simpl. apply multi_refl. Qed.
+Example test_step_one_e:
 tapp (
       tapp 
            (tabs (Id 1)(an_b int L)(tabs (Id 0)(an_b int L)(tvar None (Id 0)) L) H)
@@ -340,17 +439,21 @@ tapp (
       tapp 
            (tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)
            (tcon 1 L)
-     )
-==>* tcon 1 H.
-Proof. apply multi_step with (y:=tapp (update ([(Id 1) := tcon 1 L](tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)) H) (tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)(tcon 1 L))).
-apply st_app1. apply st_appabs. apply v_c. apply v_f. apply v_v.
+     ) / empty_store
+==>* tcon 1 H / empty_store.
+Proof. apply multi_step with (y:=(tapp (upgrade ([(Id 1) := tcon 1 L](tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)) H)(tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)(tcon 1 L)) , empty_store)).
+apply st_app1. apply st_appabs. apply v_c. simpl.
+apply multi_step with (y:= (tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(upgrade ([(Id 0) := tcon 1 L](tvar None (Id 0))) L) , empty_store)).
+apply st_app2. apply v_f.  apply st_appabs. apply v_c. 
 simpl.
-apply multi_step with (y:= tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(update ([(Id 0) := tcon 1 L](tvar None (Id 0))) L)).
-apply st_app2. apply v_f. apply v_v. apply st_appabs. apply v_c. apply v_v.
-simpl.
-apply multi_step with (y:=tcon 1 H). apply st_appabs. apply v_c.
-apply v_v. apply multi_refl.
+apply multi_step with (y:= (tcon 1 H , empty_store)). apply st_appabs. apply v_c.
+apply multi_refl.
 Qed.
+Example test_step_one_f:
+tapp (tabs (Id 1)(an_b int H)(tabs (Id 0)(an_b int L)(tvar None (Id 0)) L) H)(tcon 1 H) / empty_store
+==> tabs (Id 0)(an_b int L)(tvar None (Id 0)) H / empty_store.
+Proof. apply st_appabs. apply v_c. Qed.
+
 
 (*#################end########################*)
 
@@ -359,132 +462,283 @@ Qed.
 (**
 Intuitively, a subset of the terms in the language defined above should be 
 able to be reduced to values as specified in [value] and they are of the following
-three sorts,
-a. free-variables
-b. constants
-c. functions whose body is a value,
+two sorts,
+a. constants
+b. abstractions
 
-a. tvar (Some H) (Id 0)
-b. tcon 1 H
-c. tabs (Id 0) (an_b int H) (tvar None (Id 0)) H.
-
-In what follows, we will further reduce these value terms to 
-the "target" terms we want to have in the first place, which implies that,
-1. we have to define "target" terms and their types
-2. we have to specify a value context where the corresponding terms of the free
-   variables are stored
-3. reduce all constants and all free-variables to their corresponding "target"
-   terms.
+a. tcon 1 H
+b. tabs (Id 0) (an_b int H) (tvar None (Id 1)) H.
 *)
 
+(*
+Note that the introduction of the additional argument in [tvar] is not
+without a cost. Consider the following evaluation sequences,
+**)
+(*########a#########*)
+Example counter_intuitive_a:
+tapp (tabs (Id 1)(an_b int H)(tvar (Some H) (Id 0)) L) (tcon  1 H) 
+/ update empty_store (Id 0) (Some (tcon 1 L))
+(*==> tvar (Some H) (Id 0) / update empty_store (Id 0)(Some (tcon 1 L))*)
+==>* tcon 1 H / update empty_store (Id 0)(Some (tcon 1 L)).
+Proof. apply multi_step with (y:= (tvar (Some H)(Id 0),update empty_store (Id 0)(Some (tcon 1 L)))).
+apply st_appabs. apply v_c. 
+apply multi_step with (y:=(tcon 1 H , update empty_store (Id 0) (Some (tcon 1 L)))).
+apply st_varLH. exists (tcon 1 L). apply update_eq. apply multi_refl.
+Qed.
+(*
+ALthough the above reduction sequence is allowed by [step], it is counter 
+intuitive to start off with a free variable where the additional argument is
+not [None]**)
+(*#######b########*)
+Example counter_intuitive_b:
+tapp (tabs (Id 0)(an_b int H)(tvar (Some H) (Id 0)) L) (tcon  1 H) 
+/ empty_store
+==> tcon 1 H / empty_store.
+Proof. apply st_appabs. apply v_c. Qed.
+(*
+Again, if it is counter intuitive to start off with a bounded variable whose
+additional argument is not [None]**)
 
+(*####################Typing rules###########################*)
+(**
+In what follows, we will specify the typing rules of the system.
+One intuitive way of doing it is that we suppose that before reduction,
+we have a "typing context" as follows,
+context := id -> option Ty which maps each free variable in the expression
+to be reduced to a type.
+In addition, we impose the following condition upon the typing context such that
+the types of each free variable match these of the corresponding values,
+store (Id n) : context (Id n)
+We can call it consistancy condition.
+Then we can have the following typing rules given a certain typing context
+"Gamma",
 
+a. t_varNone
+ Gamma (Id n) = T
+-------------------------------(t_varNone)
+ Gamma |- tvar None (Id n) : T 
 
+b. t_varLH
+ Gamma (Id n) = T
+-----------------------------------------(t_varLH)
+ Gamma |- tvar (Some b) (Id n) : join T b 
+where [join] standing for a function to change the security
+label of type [T] such that it is at least as secure as [b]
 
+c. t_con
+ Gamma  |- (tcon n b) : int^b
+
+d. t_abs
+ update Gamma x T1 |- e : T2
+------------------------------------(t_abs)
+ Gamma |- tabs x T1 e b : (T1->T2)^b   
+
+e. t_app
+  Gamma |- t1 : (T1->T2)^b
+  Gamma |- t2 : T1
+----------------------------------(t_app)
+  Gamma |- tapp t1 t2 : join T2 b
+
+*)
+(*############typing context############*)
+Definition context := id -> option Ty.
+
+Definition empty_context : context := 
+  fun _ => None.
+ 
+Definition Cupdate (St : context) (X:id) (T : option Ty) : context :=
+  fun X' => if beq_id X X' then T else St X'.
+
+(*#######some useful theorems regarding [update]#########*)
+Theorem Cupdate_eq : forall T X St,
+  (Cupdate St X T) X = T.
+Proof.
+intros. unfold Cupdate. rewrite<-beq_id_refl. reflexivity. 
+Qed.
+Theorem Cupdate_neq : forall X2 X1 T St,
+  beq_id X2 X1 = false ->
+  (Cupdate St X2 T) X1 = (St X1).
+Proof.
+intros. unfold Cupdate. rewrite H0. reflexivity.
+Qed.
+Theorem Cupdate_shadow : forall T1 T2 X1 X2 (f : context),
+   (Cupdate  (Cupdate f X2 T1) X2 T2) X1 = (Cupdate f X2 T2) X1.
+Proof.
+intros. unfold Cupdate. destruct (beq_id X2 X1). reflexivity.
+reflexivity.
+Qed.
+Theorem Cupdate_same : forall T1 X1 X2 (f : context),
+  f X1 = T1 ->
+  (Cupdate f X1 T1) X2 = f X2.
+Proof.
+intros. unfold Cupdate. remember (beq_id X1 X2) as D. destruct D.
+Case ("true"). apply beq_id_eq in HeqD. subst. reflexivity.
+reflexivity.
+Qed. 
+Theorem Cupdate_permute : forall T1 T2 X1 X2 X3 f,
+  beq_id X2 X1 = false -> 
+  (Cupdate (Cupdate f X2 T1) X1 T2) X3 = (Cupdate (Cupdate f X1 T2) X2 T1) X3.
+Proof.
+intros. unfold Cupdate. remember (beq_id X1 X3) as D1. remember (beq_id X2 X3) as D2.
+destruct D1.
+Case ("D1=true"). destruct D2.
+      SCase ("D2=true"). apply beq_id_false_not_eq in H0.  apply beq_id_eq in HeqD1.
+                         apply beq_id_eq in HeqD2. rewrite<-HeqD2 in HeqD1.
+                         unfold not in H0. symmetry in HeqD1. apply H0 in HeqD1.
+                         inversion HeqD1.
+      SCase ("D2=false"). reflexivity.
+Case ("D1=false"). destruct D2.
+      SCase ("D2=true"). reflexivity.
+      SCase ("D2=false"). reflexivity.
+Qed.
+
+(*###########################end######################*)
+(*##########join#########*)
+Definition join (T:Ty) (b:Sec): Ty :=
+ match b with
+ | L => T
+ | H => match T with
+        | an_b R b => an_b R H
+        | an_f T1 T2 b => an_f T1 T2 H
+        end
+ end.
+Example test_join_1:
+ join (an_b int L) H = an_b int H.
+Proof. simpl. reflexivity. Qed.
+Example test_join_2:
+ join (an_f (an_b int L)(an_b int L) L) H = an_f (an_b int L)(an_b int L) H.
+Proof. simpl. reflexivity. Qed.
+(*###########end#########*)
+(*################end###################*)
+Inductive has_type : context  -> tm -> Ty -> Prop :=
+| t_varNone: forall Gamma n T,
+  Gamma (Id n) = Some T ->
+  has_type Gamma (tvar None (Id n)) T
+| t_varLH: forall Gamma n T T' b,
+  Gamma (Id n) = Some T ->
+  join T b = T' ->
+  has_type Gamma (tvar (Some b) (Id n)) T'
+| t_con: forall Gamma n b,
+  has_type Gamma (tcon n b) (an_b int b)
+| t_abs: forall Gamma T1 T2 b e x,
+  has_type (Cupdate Gamma x (Some T1)) e T2 ->
+  has_type Gamma (tabs x T1 e b) (an_f T1 T2 b)
+| t_app: forall Gamma T1 T2 T2' b t1 t2,
+  has_type Gamma t1 (an_f T1 T2 b) ->
+  has_type Gamma t2 T1 ->
+  join T2 b = T2' ->
+  has_type Gamma (tapp t1 t2) T2'.
+
+(*#######some examples of well-typed expressions#############*)
+Example has_type_a:
+ has_type (Cupdate empty_context (Id 0) (Some (an_b int L))) 
+          (tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tvar None (Id 0)))
+          (an_b int H).
+Proof. apply t_app with (T1:=an_b int L)(T2:=an_b int L)(b:=H).
+apply t_abs. apply t_varNone. rewrite->Cupdate_shadow. apply Cupdate_eq.
+apply t_varNone. apply Cupdate_eq. simpl. reflexivity.
+Qed.
+Example has_type_b:
+ has_type empty_context (tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tcon 1 L)) (an_b int H).
+Proof. apply t_app with (T1:=an_b int L)(T2:=an_b int L)(b:=H).
+apply t_abs. apply t_varNone. apply Cupdate_eq. apply t_con.
+reflexivity. Qed.
+Example has_type_c:
+ has_type (Cupdate empty_context (Id 0)(Some (an_b int H)))
+          (tvar None (Id 0))
+          (an_b int H).
+Proof. apply t_varNone. apply Cupdate_eq. Qed.
+Example has_type_d:
+ has_type (Cupdate empty_context (Id 0)(Some (an_b int L)))
+          (tvar (Some H) (Id 0))
+          (an_b int H).
+Proof. apply t_varLH with (T:= an_b int L). apply Cupdate_eq.
+reflexivity. Qed.
+Example has_type_e:
+ has_type empty_context
+         (tapp (
+      tapp 
+           (tabs (Id 1)(an_b int L)(tabs (Id 0)(an_b int L)(tvar None (Id 0)) L) H)
+           (tcon 1 L) 
+     )
+     (
+      tapp 
+           (tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)
+           (tcon 1 L)
+     ))
+     (an_b int H).
+Proof. apply t_app with (T1:=an_b int L)(T2:=an_b int L)(b:=H).
+apply t_app with (T1:=an_b int L)(T2:=an_f (an_b int L)(an_b int L) L)(b:=H).
+apply t_abs. apply t_abs. apply t_varNone. apply Cupdate_eq. apply t_con. reflexivity.
+apply t_app with (T1:=an_b int L)(T2:=an_b int L)(b:=L). apply t_abs.
+apply t_varNone. apply Cupdate_eq. apply t_con. reflexivity. reflexivity.
+Qed.
+Example has_type_f:
+ has_type empty_context
+          (tapp (tabs (Id 1)(an_b int H)(tabs (Id 0)(an_b int L)(tvar None (Id 0)) L) H)(tcon 1 H))
+          (an_f (an_b int L)(an_b int L) H).
+Proof. apply t_app with (T1:=an_b int H)(T2:=an_f (an_b int L)(an_b int L) L)(b:=H).
+apply t_abs. apply t_abs. apply t_varNone. apply Cupdate_eq. apply t_con. reflexivity.
+Qed.
+Example has_type_g:
+ has_type (Cupdate empty_context (Id 0) (Some (an_b int L)))
+          (tapp (tabs (Id 1)(an_b int H)(tvar (Some H)(Id 0)) L)(tcon 1 H))
+          (an_b int H).
+Proof. apply t_app with (T1:=an_b int H)(T2:=an_b int H)(b:=L).
+apply t_abs. apply t_varLH with (T:=an_b int L). 
+assert (A:  beq_id (Id 0) (Id 1) = false ). reflexivity. 
+apply Cupdate_permute with (f:=empty_context)(T1:=Some (an_b int L))(T2:=Some (an_b int H))(X3:=(Id 0)) in A.
+rewrite->A. apply Cupdate_eq. reflexivity. apply t_con. reflexivity.
+Qed.
+Example has_type_h:
+ has_type empty_context
+          (tapp (tabs (Id 0)(an_b int L)(tvar (Some H) (Id 0)) L)(tcon 1 L))
+          (an_b int H).
+Proof. apply t_app with (T1:=an_b int L)(T2:= an_b int H)(b:=L).
+apply t_abs. apply t_varLH with (T:=an_b int L). apply Cupdate_eq. reflexivity.
+apply t_con. reflexivity. Qed.
+
+(*############some counter examples##########*)
+(**
+Case 1: undefined free variables
+*)
+Example has_type_i:
+ ~has_type empty_context
+           (tvar None (Id 0))
+           (an_b int L).
+Proof. intros contra. inversion contra. inversion H2. Qed.
+(**
+Case 2: ill-typed abstractions whose body contains undefined
+        free variables
+*)
+Example has_type_j:
+~has_type empty_context
+          (tabs (Id 0) (an_b int L)(tvar None (Id 1)) H)
+          (an_f (an_b int L)(an_b int L) H).
+Proof. intros contra. inversion contra. subst. inversion H2. 
+       inversion H3. Qed.
+(**
+Case 3: ill-matched applications
+*)
+Example has_type_k:
+~has_type empty_context
+          (tapp (tabs (Id 0)(an_b int L)(tcon 2 L) H)(tcon 1 H))
+          (an_b int H).
+Proof. intros contra. inversion contra. subst. inversion H4. subst.
+       inversion H2. Qed.
 
 (**
-Now we have to define a "typing context" which is essentially a list of length n
-whose elements are security types specified above.
-Since the length of the list has to be considered together with the type of the 
-list, we cannot specify it in Coq as a list type. For the way how type is defined
-in Coq does not provide us with such alternative. 
-Instead we specify it as a proposition, 
+Case 4: false applications
 *)
-Inductive Ctxt : nat -> Prop :=
-| c_nil  : Ctxt 0
-| c_cons : forall {n : nat}, Ty -> Ctxt n -> Ctxt (S n).  
+Example has_type_l:
+~has_type empty_context
+          (tapp (tcon 1 H)(tcon 2 L))
+          (an_b int L).
+Proof. intros contra. inversion contra. inversion H2.
+Qed.          
+(*################end########################################*)
 
-(**
-Let us consider the following cases to be sure that we successfully 
-establishes the right correspondance between the proof object standing for
-our typing environment and the proposition which standing for the type of
-the context,
-a. c_nil : Ctxt 0
-b. c_cons (an_b int L) c_nil : Ctxt 1
-c. c_cons (an_b int H) (c_cons (an_b int L) c_nil) : Ctxt 2
-d. c_cons (an_f (an_b int L)(an_b int H)H) (c_cons (an_b int H) (c_cons (an_b int L) c_nil))
-*)
-Example test_Ctxt_1 : 
-Ctxt 0.
-Proof. apply c_nil.
-Example test_Ctxt_2 :
-Ctxt 1.
-Proof. apply (c_cons (an_b int L) c_nil).
-Example test_Ctxt_3 :
-Ctxt 2.
-Proof. apply (c_cons (an_b int H) (c_cons (an_b int L) c_nil)).
-Example test_Ctxt_4 :
-Ctxt 3.
-Proof. apply (
-c_cons (an_f (an_b int L) (an_b int H) H) 
-(
-c_cons (an_b int H)
-(
-c_cons (an_b int L) c_nil
-)
-)
-).
-
-
-(*########################################################*)
-(*note that the above section needs to be modified*)
-(*########################################################*)
-
-
-(*security types for values*)
-(*firstly we define a "ground type" named "N"*)
-Inductive gTy : Type :=
-| N : gTy.
-
-(*then we define the "high-level type" called "hTy"*)
-Inductive hTy : Type :=
-| High  : gTy -> hTy
-| Low   : gTy -> hTy
-| FHigh : hTy -> hTy -> hTy
-| FLow  : hTy -> hTy -> hTy.
-(**
-Some examples of our security types above in terms of the high-level form,
-a. int^L
-   Low N
-b. int^H
-   High N
-c. (int^L -> int^H)^H
-   FHigh (Low N) (High N)
-d. (int^H -> int^L)^L
-   FLow  (High N) (Low N)
-*)
-Check (High N).
-Check (Low N).
-Check (FHigh (Low N)(High N)).
-Check (FLow (High N)(Low N)).
-
-(**
-Now we can define the terms of the system
-*)
-Inductive tm : Type :=
-| tvar   : nat -> tm
-| tconst : Sec -> nat -> tm
-| tabs   : Sec -> nat -> hTy -> tm -> tm
-| tapp   : tm -> tm -> tm.
-(**
-Consider the following terms,
-a. tvar 1
-note that in case of variable,tvar n, n indicates
-the corresponding place in the typing context where
-the type of the variable is stored
-*)
-
-
-
-
-
-
-
-
-
-
-
-
+(*#########################end###############################*)
 
 
 
