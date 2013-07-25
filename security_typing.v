@@ -177,6 +177,12 @@ Inductive value : tm -> Prop :=
 | v_f : forall n T e b,
         value (tabs (Id n) T e b).
 
+(**
+Note that we can not say that all values in the language are 
+closed terms for function body can contain free variables and
+therefore it is not colsed.
+*)
+
 (*##########################end##############################*)
 
 
@@ -194,17 +200,19 @@ auxiliary function [update],
 *)
 
 Fixpoint upgrade (e:tm) (b:Sec): tm :=
- match b with
- | L => e
- | H => match e with
-        | tvar _ x => tvar (Some H) x
-        | tcon n _ => tcon n H
-        | tabs x T t _ => tabs x T t H
-        | tapp f e => tapp (upgrade f H) e
-        end
+ match e , b with
+  | e , L => e
+  | tvar _ x , H => tvar (Some H) x
+  | tcon n _ , H => tcon n H
+  | tabs x T t _ , H => tabs x T t H
+  | tapp f e , H => tapp (upgrade f H) e
  end.
 
 (*#######tests of [update]##################*)
+Example test_upgrade_0: forall e:tm,
+ upgrade e L = e.
+Proof. intros. destruct e. reflexivity.
+reflexivity. reflexivity. reflexivity. Qed.
 Example test_upgrade_1:
 upgrade (tvar None (Id 0)) H = tvar (Some H) (Id 0).
 Proof. simpl. reflexivity. Qed.
@@ -239,7 +247,9 @@ Proof. simpl. reflexivity. Qed.
 Fixpoint subst (x:id) (s:tm) (t:tm): tm :=
   match t with
 (*variables*)
-  | tvar o x' => 
+  | tvar (Some b) x' => 
+      if beq_id x x' then (upgrade s b) else t
+  | tvar None x' =>
       if beq_id x x' then s else t
 (*abstractions*)
   | tabs x' T t1 b => 
@@ -758,15 +768,31 @@ b. type preservation
 *)
 (*############type preserversion############*)
 (**
-According to the above specification, [Gamma : context] stands for the typing
-context for both free and bounded variables. Moreover before the reduction
-of any term, it is actually the typing context for free-variables.
-It follows that the typing context  has to meet the following condition,
+Consider the following reduction sequence,
+tapp
+(tabs (Id 1)(an_b int L)(tabs (Id 0)(an_b int L)(tvar None (Id 0)) L) H)
+(tcon 1 L) / empty_store 
+==>
+tabs (Id 0)(an_b int L)(tvar None (Id 0)) H / empty_store
+note that,
+tabs (Id 0)(an_b int L)(tvar None (Id 0)) L
+has type,
+empty_context |- (int^L -> int^L)^L
+which indicates that the body of the function is a closed term and
+it can be typed under any typing context. This illustrates that in
+our reduction sequence, the removal of lambda will not require the
+expansion of the typing context we start with for the resulting term
+is either closed or typable under the original typing context.
+
+Now [Gamma : context] stands for the typing context for both free and 
+bounded variables. Before the reduction of any term, it is actually the 
+typing context for free-variables. It follows that the typing context  
+has to meet the following condition,
 
 a. at the beginning of the reduction, [Gamma] must indicate the types of
    its corresponding value context [st : store].
 
-Now as reduction in progress, [Gamma] always stay the same for 
+Now as reduction in progress, [Gamma] always stays the same for 
 in our simple language we assume that we begin with a fixed set of 
 free-variables whose values and types are not to be changed.
 Therefore it is clear that if we begin with a perfectly related typing context
@@ -781,6 +807,160 @@ has_type Gamma t' T
 )
 
 *)
+
+(**
+Note to specify [type preservation] property we have to firstly
+clarify what is [store_well_typed] as follows,
+
+given [Gamma : context] and [st : VStore], if
+forall n, 
+(exists e:tm, st (Id n) = Some e) ->
+has_type Gamma (extract (st (Id n))) (extract (Gamma (Id n)))
+where [extract] is a function which gets rid of the label [Some].
+
+Since we already have one such function [extract] to help in case
+of value context, we specify a similar function in case of typing 
+context as follows,
+*)
+Definition Cextract (T : option Ty) : Ty :=
+match T with
+| Some e => e
+| None   => an_b int H
+end.
+
+Definition store_well_typed (Gamma:context) (st:VStore) :=
+     forall n, (exists e:tm, st (Id n) = Some e) -> 
+     has_type Gamma (extract (st (Id n))) (Cextract (Gamma (Id n))).
+
+(*####preservation theorem#######*)
+(*#################auxiliary theorems##########*)
+(*########################################*)
+Axiom functional_extensionality : forall {X Y: Type} {f g : X -> Y},
+    (forall (x: X), f x = g x) ->  f = g.
+(*########################################*)
+Theorem has_type_H: forall Gamma e T,
+has_type Gamma e T ->
+has_type Gamma (upgrade e H)(join T H).
+Proof.
+intros. induction H0. 
+Case ("t_varNone").
+simpl. apply t_varLH with (T:=T). apply H0.
+reflexivity. 
+Case ("t_varLH"). 
+destruct T. destruct b. simpl in H1. rewrite<-H1.
+simpl. apply t_varLH with (T:= an_b r s). apply H0. reflexivity.
+simpl in H1. rewrite<-H1. simpl. apply t_varLH with (T:=an_b r s).
+apply H0. reflexivity. destruct b. simpl in H1. rewrite<-H1. simpl.
+apply t_varLH with (T:=an_f T1 T2 s). apply H0. reflexivity.
+simpl in H1. rewrite<-H1. simpl. apply t_varLH with (T:=an_f T1 T2 s).
+apply H0. reflexivity.
+Case ("t_con").
+simpl. apply t_con.
+Case ("t_abs").
+simpl. apply t_abs. apply H0.
+Case ("t_app").
+destruct b. destruct T2.  simpl in H0. rewrite<-H0. simpl.
+simpl in IHhas_type1. apply t_app with (T1:=T1)(T2:=an_b r s)(b:=H).
+apply IHhas_type1. apply H0_0. reflexivity. simpl in H0.
+rewrite<-H0. simpl. simpl in IHhas_type1.
+apply t_app with (T1:=T1)(T2:=an_f T2_1 T2_2 s)(b:=H). apply IHhas_type1.
+apply H0_0. reflexivity. destruct T2. simpl in H0. rewrite<-H0. simpl.
+simpl in IHhas_type1. apply t_app with (T1:=T1)(T2:=an_b r s)(b:=H).
+apply IHhas_type1. apply H0_0. reflexivity. simpl in H0. rewrite<-H0. simpl.
+simpl in IHhas_type1. apply t_app with (T1:=T1)(T2:=an_f T2_1 T2_2 s)(b:=H).
+apply IHhas_type1. apply H0_0. reflexivity.
+Qed.
+  
+(**
+Theorem substitution_preserves_typing': forall Gamma x t2 T1 T2 e,
+has_type empty_context t2 T1 ->
+has_type (Cupdate Gamma x (Some T1)) e T2 ->
+has_type Gamma ([x:=t2]e) T2.
+
+*)
+
+Theorem substitution_preserves_typing: forall Gamma x t2 T1 T2 e,
+has_type Gamma t2 T1 ->
+has_type (Cupdate Gamma x (Some T1)) e T2 ->
+has_type Gamma ([x := t2]e) T2.
+Proof. intros. generalize dependent Gamma. generalize dependent x.
+generalize dependent t2. generalize dependent T1. generalize dependent
+T2. induction e.
+Case ("tvar").
+intros. inversion H1. subst. simpl. remember (beq_id x (Id n)) as BB.
+destruct BB. apply beq_id_eq in HeqBB. rewrite->HeqBB in H6.
+rewrite->Cupdate_eq in H6. inversion H6. subst. apply H0.
+symmetry in HeqBB. apply Cupdate_neq with (T:=Some T1)(St:=Gamma)in HeqBB.
+rewrite->HeqBB in H6. apply t_varNone. apply H6. subst. simpl.
+remember (beq_id x (Id n)) as BB. destruct BB. apply beq_id_eq in HeqBB.
+rewrite->HeqBB in H5. rewrite->Cupdate_eq in H5. inversion H5. subst.
+destruct b. simpl. assert (A: forall e, upgrade e L = e). apply test_upgrade_0.
+specialize (A t2).  rewrite->A. clear A. apply H0.
+apply has_type_H. apply H0. symmetry in HeqBB. 
+apply Cupdate_neq with (T:=Some T1)(St:=Gamma) in HeqBB. rewrite->HeqBB in H5.
+apply t_varLH with (T:=T).  apply H5. reflexivity.
+Case ("tcon").
+intros. simpl. inversion H1. subst. apply t_con.
+Case ("tabs").
+intros. simpl. remember (beq_id x i) as BB. destruct BB. inversion H1.
+subst. apply t_abs. apply beq_id_eq in HeqBB. rewrite->HeqBB in H8.
+assert (Cupdate Gamma i (Some t) = Cupdate (Cupdate Gamma i (Some T1)) i (Some t)).
+apply functional_extensionality. intros. remember (beq_id i x0) as CC. destruct CC.
+apply beq_id_eq in HeqCC. rewrite->HeqCC. rewrite->Cupdate_eq.
+rewrite->Cupdate_eq. reflexivity. symmetry in HeqCC. inversion HeqCC. inversion HeqCC.
+apply Cupdate_neq with (T:= Some t)(St:=Gamma ) in HeqCC. rewrite->HeqCC. 
+apply Cupdate_neq with (T:= Some t)(St:=Cupdate Gamma i (Some T1)) in H3.
+rewrite->H3. apply Cupdate_neq with (T:=Some T1)(St:=Gamma) in H4. rewrite->H4.
+reflexivity. rewrite->H2. apply H8. inversion H1. subst. apply t_abs.
+apply IHe with (T1:=T1). admit(*big trouble here!!!*). admit.
+Case ("tapp").
+intros. simpl. inversion H1. subst. apply t_app with (T1:=T0)(T2:=T3)(b:=b).
+apply IHe1 with (T1:=T1). apply H0. apply H4. apply IHe2 with (T1:=T1). apply H0.
+apply H6. reflexivity.
+Qed.
+ 
+
+
+
+
+
+(*#######################end###################*)
+Theorem preservation: forall Gamma t t' st T,
+store_well_typed Gamma st ->
+has_type Gamma t T ->
+t / st ==> t' / st ->
+has_type Gamma t' T.
+Proof. intros. generalize dependent t'. generalize dependent st.
+induction H1.
+Case ("t_varNone"). intros. inversion H2. subst.
+assert (A: T = Cextract (Gamma (Id n))). rewrite->H0. reflexivity.
+rewrite->A. clear A. specialize (H1 n). apply H1. apply H4.
+Case ("t_varLH"). intros. inversion H3. subst.
+assert (A: T = Cextract (Gamma (Id n))). rewrite->H0. reflexivity.
+rewrite->A. clear A. specialize (H2 n). apply H2 in H5. destruct b.
+simpl. assert (A: forall e, upgrade e L = e). apply test_upgrade_0.
+specialize (A (extract (st (Id n)))). rewrite->A. clear A. apply H5.
+apply has_type_H. apply H5.
+Case ("t_con"). intros. inversion H2.
+Case ("t_abs"). intros. inversion H2.
+Case ("t_app"). intros. inversion H2. subst. inversion H1_. subst.
+                destruct b. assert (A: forall e, upgrade e L = e).
+                apply test_upgrade_0. specialize (A ([x := t2]e)).
+                rewrite->A. clear A. simpl. 
+                apply substitution_preserves_typing with (T1:=T1).
+                apply H1_0. apply H5. apply has_type_H.
+                apply substitution_preserves_typing with (T1:=T1).
+                apply H1_0. apply H5. 
+                subst. apply t_app with (T1:=T1)(T2:=T2)(b:=b).
+                apply IHhas_type1 with (t':=t1')in H1. apply H1.
+                apply H4. apply H1_0. reflexivity. subst.
+                apply t_app with (T1:=T1)(T2:=T2)(b:=b). apply H1_.
+                apply IHhas_type2 with (t':=t2') in H1. apply H1.
+                apply H8. reflexivity.
+Qed.
+
+
+(*############end################*)
 (*##############end#########################*)
 
 (*###########end##########*)
