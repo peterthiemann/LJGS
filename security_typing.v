@@ -37,6 +37,16 @@ Inductive RawTy : Type :=
 Inductive Ty : Type :=
 | an_b : RawTy -> Sec -> Ty
 | an_f : Ty -> Ty -> Sec -> Ty.
+
+(*security type*)
+(**
+Inductive RawTy' : Type :=
+| int' : RawTy'
+| fun' : Ty' -> Ty' -> Sec -> RawTy'
+with Ty' : Type :=
+| tann : RawTy' -> Sec -> Ty'.
+*)
+
 (**
 Having defined our security types, our above examples can be expressed as follows,
 a. [an_b int L : Ty]
@@ -73,7 +83,11 @@ t ::= x         variable
 *)
 
 Inductive tm : Type :=
-| tvar  : option Sec -> id -> tm
+| tvar  : option Sec -> id -> tm 
+(**
+Note the first argument is meant for
+security updating
+*)
 | tcon  : nat -> Sec -> tm
 | tabs  : id -> Ty -> tm -> Sec -> tm
 | tapp  : tm -> tm -> tm
@@ -179,8 +193,8 @@ Inductive value : tm -> Prop :=
 
 (**
 Note that we can not say that all values in the language are 
-closed terms for function body can contain free variables and
-therefore it is not colsed.
+closed terms for function body can contain "well defined" free 
+variables and therefore it is not colsed.
 *)
 
 (*##########################end##############################*)
@@ -300,7 +314,8 @@ b. referring to [Reference.v]
    st := list tm
 
 We use the former method to deal with free variables.
-In what follows, "st" stands for the "value context" for all free variables,
+In what follows, "st" stands for the "value context" for all free variables
+and all terms in the context are closed terms,
 *)
 Definition VStore := id -> option tm.
 
@@ -392,6 +407,114 @@ match a with
 | Some e => e
 | None   => tcon 1 L
 end.
+
+(**
+Note the following block is about the specification of a function [closed]
+which transforms abstractions into closed ones
+*)
+(*closed abstractions*)
+(*###########################################*)
+Definition Bregis:= id -> bool.
+
+Definition empty_regis : Bregis := 
+  fun _ => false.
+ 
+Definition Bupdate (r : Bregis) (X:id): Bregis :=
+  fun X' => if beq_id X X' then true else r X'.
+(*#######some useful theorems regarding [Bupdate]#########*)
+Theorem Bupdate_eq : forall X r,
+  (Bupdate r X) X = true.
+Proof.
+intros. unfold Bupdate. rewrite<-beq_id_refl. reflexivity. 
+Qed.
+Theorem Bupdate_neq : forall X2 X1 r,
+  beq_id X2 X1 = false ->
+  (Bupdate r X2) X1 = (r X1).
+Proof.
+intros. unfold Bupdate. rewrite H0. reflexivity.
+Qed.
+Theorem Bupdate_shadow : forall x1 x2 (f : Bregis),
+   (Bupdate  (Bupdate f x2) x2) x1 = (Bupdate f x2) x1.
+Proof.
+intros. unfold Bupdate. destruct (beq_id x2 x1). reflexivity.
+reflexivity.
+Qed.
+Theorem Bupdate_same : forall x1 x2 (f : Bregis),
+  f x1 = true ->
+  (Bupdate f x1) x2 = f x2.
+Proof.
+intros. unfold Bupdate. remember (beq_id x1 x2) as D. destruct D.
+Case ("true"). apply beq_id_eq in HeqD. subst. symmetry. apply H0.
+reflexivity.
+Qed. 
+Theorem Bupdate_permute : forall x1 x2 x3 f,
+  beq_id x2 x1 = false -> 
+  (Bupdate (Bupdate f x2) x1) x3 = (Bupdate (Bupdate f x1) x2) x3.
+Proof.
+intros. unfold Bupdate. remember (beq_id x1 x3) as D1. remember (beq_id x2 x3) as D2.
+destruct D1. destruct D2. reflexivity. reflexivity. reflexivity.
+Qed.
+
+(*###########################end######################*)
+(**
+The above definitions give us function which upon the variable id
+tells us whether it is bounded or not.
+For instance,
+we have [Bupdate empty_regis (Id 0)] and a variable [tvar None (Id 0)],
+since [Bupdate empty_regis (Id 0) (Id 0) = true] we know that this variable
+is bounded
+*)
+(*the function*)
+Fixpoint closed (r : Bregis) (t : tm) (st : VStore): tm :=
+match t with
+| tvar None x => if (r x) then (tvar None x) else (extract (st x))
+| tvar (Some b) x => if (r x) then (tvar (Some b) x) else (upgrade (extract (st x)) b)
+| tcon n b => tcon n b
+| tabs x T e b => tabs x T (closed (Bupdate r x) e st) b
+| tapp t1 t2 => tapp (closed r t1 st) (closed r t2 st)
+end.
+(*############some examples####################*)
+Example test_closed_1:
+closed empty_regis (tabs (Id 0) (an_b int H) (tvar None (Id 1)) H)
+       (update empty_store (Id 1) (Some (tcon 1 L)))
+= tabs (Id 0) (an_b int H) (tcon 1 L) H.
+Proof. reflexivity. Qed.
+Example test_closed_2:
+closed empty_regis (tabs (Id 0) (an_b int H) (tvar (Some H) (Id 1)) H)
+       (update empty_store (Id 1) (Some (tcon 1 L)))
+= tabs (Id 0) (an_b int H) (tcon 1 H) H.
+Proof. reflexivity. Qed.
+Example test_closed_3:
+closed empty_regis (tabs (Id 0)(an_b int H)(tabs (Id 1)(an_b int L)(tvar None (Id 1)) L) H)
+       empty_store
+= tabs (Id 0)(an_b int H)(tabs (Id 1)(an_b int L)(tvar None (Id 1)) L) H.
+Proof.  reflexivity. Qed.
+Example test_closed_4:
+closed empty_regis (tabs (Id 0)(an_b int H)(tabs (Id 1)(an_b int L)(tvar None (Id 3)) L) H)
+       (update empty_store (Id 3) (Some (tcon 1 L)))
+= tabs (Id 0)(an_b int H)(tabs (Id 1)(an_b int L)(tcon 1 L) L) H.
+Proof. reflexivity. Qed.
+Example test_closed_5:
+closed (Bupdate empty_regis (Id 0)) 
+       (tapp (tabs (Id 1)(an_b int H)(tvar (Some L) (Id 1)) L)(tvar None (Id 0))) 
+       empty_store
+= tapp (tabs (Id 1)(an_b  int H)(tvar (Some L)(Id 1)) L)(tvar None (Id 0)).
+Proof. simpl. reflexivity. Qed.
+Example test_closed_6:
+closed (Bupdate empty_regis (Id 0))
+       (tapp (tabs (Id 1)(an_b int H)(tvar (Some H)(Id 1)) L)(tvar (Some H) (Id 1)))
+       (update empty_store (Id 1) (Some (tcon 1 L)))
+= tapp (tabs (Id 1)(an_b int H)(tvar (Some H)(Id 1)) L)(tcon 1 H).
+Proof. reflexivity. Qed.
+(**
+[closed] is essentially a partial function in that it do not consider the case
+where [st : VStore] is empty. Therefore it relies on the fact that the terms to
+be applied to it is well-typed. This is problematic and should be dealt with
+explicitly!
+*)
+(*###############end###########################*)
+(*###########################################*)
+
 Inductive step : (tm * VStore) -> (tm * VStore) -> Prop :=
 | st_varNone: forall n st,
   (exists e:tm, st (Id n) = Some e ) ->
@@ -399,9 +522,11 @@ Inductive step : (tm * VStore) -> (tm * VStore) -> Prop :=
 | st_varLH: forall n st b,
   (exists e:tm, st (Id n) = Some e ) ->
   tvar (Some b) (Id n) / st ==> upgrade (extract (st (Id n))) b / st
-| st_appabs: forall x T e b v st,
+| st_appabs: forall x T e b v v' v'' st,
   value v ->
-  tapp (tabs x T e b) v / st ==> upgrade ([x := v]e) b / st
+  v' = closed empty_regis v st ->
+  v'' = upgrade ([x := v']e) b ->
+  tapp (tabs x T e b) v / st ==> v'' / st
 | st_app1: forall t1 t1' t2 st,
   t1 / st ==> t1' / st ->
   tapp t1 t2 / st ==> tapp t1' t2 / st
@@ -421,7 +546,8 @@ Notation "t1 '/' st '==>*' t2 '/' st'" := (multistep (t1,st) (t2,st'))
 Example test_step_one_a:
 tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tcon 1 L) / empty_store
 ==> tcon 1 H / empty_store.
-Proof. apply st_appabs. apply v_c. Qed.
+Proof. apply st_appabs with (v':=tcon 1 L). apply v_c. reflexivity.
+reflexivity. Qed.
 Example test_step_one_b:
 tvar None (Id 0) / update empty_store (Id 0) (Some (tcon 1 H)) ==>
 tcon 1 H / update empty_store (Id 0) (Some (tcon 1 H)).
@@ -438,7 +564,7 @@ tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tvar None (Id 0)) / update em
 Proof. apply multi_step with (y:= (tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(tcon 1 L) , update empty_store (Id 0) (Some (tcon 1 L)))).
  apply st_app2. apply v_f. apply st_varNone. exists (tcon 1 L). apply update_eq.
 apply multi_step with (y:=(upgrade ([Id 0 := tcon 1 L](tvar None (Id 0))) H , update empty_store (Id 0) (Some (tcon 1 L)))).
-apply st_appabs. apply v_c. simpl. apply multi_refl. Qed.
+apply st_appabs with (v':=tcon 1 L). apply v_c. reflexivity. reflexivity. simpl. apply multi_refl. Qed.
 Example test_step_one_e:
 tapp (
       tapp 
@@ -452,17 +578,30 @@ tapp (
      ) / empty_store
 ==>* tcon 1 H / empty_store.
 Proof. apply multi_step with (y:=(tapp (upgrade ([(Id 1) := tcon 1 L](tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)) H)(tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) L)(tcon 1 L)) , empty_store)).
-apply st_app1. apply st_appabs. apply v_c. simpl.
+apply st_app1. apply st_appabs with (v':=tcon 1 L). apply v_c. reflexivity. reflexivity. simpl.
 apply multi_step with (y:= (tapp (tabs (Id 0)(an_b int L)(tvar None (Id 0)) H)(upgrade ([(Id 0) := tcon 1 L](tvar None (Id 0))) L) , empty_store)).
-apply st_app2. apply v_f.  apply st_appabs. apply v_c. 
+apply st_app2. apply v_f.  apply st_appabs with (v':= tcon 1 L). apply v_c. reflexivity. reflexivity. 
 simpl.
-apply multi_step with (y:= (tcon 1 H , empty_store)). apply st_appabs. apply v_c.
+apply multi_step with (y:= (tcon 1 H , empty_store)). apply st_appabs with (v':= tcon 1 L). apply v_c. reflexivity. reflexivity.
 apply multi_refl.
 Qed.
 Example test_step_one_f:
 tapp (tabs (Id 1)(an_b int H)(tabs (Id 0)(an_b int L)(tvar None (Id 0)) L) H)(tcon 1 H) / empty_store
 ==> tabs (Id 0)(an_b int L)(tvar None (Id 0)) H / empty_store.
-Proof. apply st_appabs. apply v_c. Qed.
+Proof. apply st_appabs with (v':=tcon 1 H). apply v_c. reflexivity.
+reflexivity. Qed.
+Example test_step_one_g:
+tapp (tabs (Id 0)(an_f (an_b int L)(an_b int L) L)(tvar None (Id 0)) H)
+     (tabs (Id 0)(an_b int L)(tvar None (Id 0)) L) / empty_store
+==> tabs (Id 0)(an_b int L)(tvar None (Id 0)) H / empty_store.
+Proof. apply st_appabs with (v':=tabs (Id 0)(an_b int L)(tvar None (Id 0)) L).
+apply v_f. reflexivity. reflexivity. Qed.
+Example test_step_one_h:
+tapp (tabs (Id 0)(an_f (an_b int L) (an_b int L) L)(tvar None (Id 0)) H)
+     (tabs (Id 0) (an_b int L)(tvar None (Id 1)) L) / update empty_store (Id 1) (Some (tcon 1 L))
+==> tabs (Id 0)(an_b int L)(tcon 1 L) H / update empty_store (Id 1) (Some (tcon 1 L)).
+Proof. apply st_appabs with (v':=tabs (Id 0)(an_b int L)(tcon 1 L) L).
+apply v_f. reflexivity. reflexivity. Qed.
 
 
 (*#################end########################*)
@@ -491,7 +630,7 @@ tapp (tabs (Id 1)(an_b int H)(tvar (Some H) (Id 0)) L) (tcon  1 H)
 (*==> tvar (Some H) (Id 0) / update empty_store (Id 0)(Some (tcon 1 L))*)
 ==>* tcon 1 H / update empty_store (Id 0)(Some (tcon 1 L)).
 Proof. apply multi_step with (y:= (tvar (Some H)(Id 0),update empty_store (Id 0)(Some (tcon 1 L)))).
-apply st_appabs. apply v_c. 
+apply st_appabs with (v':=tcon 1 H). apply v_c. reflexivity. reflexivity. 
 apply multi_step with (y:=(tcon 1 H , update empty_store (Id 0) (Some (tcon 1 L)))).
 apply st_varLH. exists (tcon 1 L). apply update_eq. apply multi_refl.
 Qed.
@@ -504,7 +643,8 @@ Example counter_intuitive_b:
 tapp (tabs (Id 0)(an_b int H)(tvar (Some H) (Id 0)) L) (tcon  1 H) 
 / empty_store
 ==> tcon 1 H / empty_store.
-Proof. apply st_appabs. apply v_c. Qed.
+Proof. apply st_appabs with (v':= tcon 1 H). apply v_c. reflexivity. reflexivity.
+ Qed.
 (*
 Again, if it is counter intuitive to start off with a bounded variable whose
 additional argument is not [None]**)
@@ -753,7 +893,7 @@ Qed.
 (*######Properties########*)
 (**
 There are two important type safety properties we want to investigate,
-a. Strong Progress
+a.Progress
  forall Gamma T t t' st, 
  has_type Gamma t T ->
  value t \/ exists t', t / st ==> t' / st
@@ -871,16 +1011,17 @@ simpl in IHhas_type1. apply t_app with (T1:=T1)(T2:=an_f T2_1 T2_2 s)(b:=H).
 apply IHhas_type1. apply H0_0. reflexivity.
 Qed.
   
-(**
-Theorem substitution_preserves_typing': forall Gamma x t2 T1 T2 e,
-has_type empty_context t2 T1 ->
-has_type (Cupdate Gamma x (Some T1)) e T2 ->
-has_type Gamma ([x:=t2]e) T2.
+ 
 
-*)
+Theorem s_p_t_1: forall Gamma t T,
+has_type empty_context t T ->
+has_type Gamma t T.
+Proof. Admitted.
+
+
 
 Theorem substitution_preserves_typing: forall Gamma x t2 T1 T2 e,
-has_type Gamma t2 T1 ->
+has_type empty_context t2 T1 ->
 has_type (Cupdate Gamma x (Some T1)) e T2 ->
 has_type Gamma ([x := t2]e) T2.
 Proof. intros. generalize dependent Gamma. generalize dependent x.
@@ -889,14 +1030,14 @@ T2. induction e.
 Case ("tvar").
 intros. inversion H1. subst. simpl. remember (beq_id x (Id n)) as BB.
 destruct BB. apply beq_id_eq in HeqBB. rewrite->HeqBB in H6.
-rewrite->Cupdate_eq in H6. inversion H6. subst. apply H0.
+rewrite->Cupdate_eq in H6. inversion H6. subst. apply s_p_t_1. apply H0.
 symmetry in HeqBB. apply Cupdate_neq with (T:=Some T1)(St:=Gamma)in HeqBB.
 rewrite->HeqBB in H6. apply t_varNone. apply H6. subst. simpl.
 remember (beq_id x (Id n)) as BB. destruct BB. apply beq_id_eq in HeqBB.
 rewrite->HeqBB in H5. rewrite->Cupdate_eq in H5. inversion H5. subst.
 destruct b. simpl. assert (A: forall e, upgrade e L = e). apply test_upgrade_0.
-specialize (A t2).  rewrite->A. clear A. apply H0.
-apply has_type_H. apply H0. symmetry in HeqBB. 
+specialize (A t2).  rewrite->A. clear A. apply s_p_t_1. apply H0.
+apply has_type_H. apply s_p_t_1. apply H0. symmetry in HeqBB. 
 apply Cupdate_neq with (T:=Some T1)(St:=Gamma) in HeqBB. rewrite->HeqBB in H5.
 apply t_varLH with (T:=T).  apply H5. reflexivity.
 Case ("tcon").
@@ -912,13 +1053,37 @@ apply Cupdate_neq with (T:= Some t)(St:=Gamma ) in HeqCC. rewrite->HeqCC.
 apply Cupdate_neq with (T:= Some t)(St:=Cupdate Gamma i (Some T1)) in H3.
 rewrite->H3. apply Cupdate_neq with (T:=Some T1)(St:=Gamma) in H4. rewrite->H4.
 reflexivity. rewrite->H2. apply H8. inversion H1. subst. apply t_abs.
-apply IHe with (T1:=T1). admit(*big trouble here!!!*). admit.
+apply IHe with (T1:=T1). apply H0. admit.
 Case ("tapp").
 intros. simpl. inversion H1. subst. apply t_app with (T1:=T0)(T2:=T3)(b:=b).
 apply IHe1 with (T1:=T1). apply H0. apply H4. apply IHe2 with (T1:=T1). apply H0.
 apply H6. reflexivity.
 Qed.
- 
+
+(**
+Note that if we specify the theorem in the following way then we would
+have problems in the proof for we assume that before the substitution
+the value term used to replace the bounded variable is always closed,
+
+Theorem substitution_preserves_typing': forall Gamma x t2 T1 T2 e,
+has_type empty_context t2 T1 ->
+has_type (Cupdate Gamma x (Some T1)) e T2 ->
+has_type Gamma ([x:=t2]e) T2.
+
+It seems to be a overly restrictive assumption consider the following case,
+tapp 
+(tabs (Id 0) (an_f (an_b int L)(an_b int L) L)(tvar None (Id 0)) H)
+(tabs (Id 0)(an_b int L)(tvar None (Id 1)) L)
+where
+[tabs (Id 0)(an_b int L)(tvar None (Id 1)) L] is not a closed term although
+it is a value.
+
+However we know that if we start with a well-typed term then 
+[tabs (Id 0)(an_b int L)(tvar None (Id 1)) L] must be well typed and can be
+"reduced" to a closed term for we can replace the free variable with its value
+which is supposed to be a closed term. 
+
+*) 
 
 
 
