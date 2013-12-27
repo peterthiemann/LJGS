@@ -1040,10 +1040,10 @@ Inductive has_type : Sec -> context -> heap_Ty -> tm -> Ty -> Prop :=
     has_type pc Gamma HT (tprot b t) T'
  
   | t_app: forall pc Gamma HT T1 T2 T2' b t1 t2,
-  has_type pc Gamma HT t1 (an (fn T1 (joins pc b) T2) b) ->
-  has_type pc Gamma HT t2 T1 ->
-  joinTs T2 b = T2' ->
-  has_type pc Gamma HT (tapp t1 t2) T2'
+    has_type pc Gamma HT t1 (an (fn T1 (joins pc b) T2) b) ->
+    has_type pc Gamma HT t2 T1 ->
+    joinTs T2 b = T2' ->
+    has_type pc Gamma HT (tapp t1 t2) T2'
  
   | t_ref: forall pc Gamma HT t T b b',
     has_type (joins pc b) Gamma HT t T ->
@@ -2070,6 +2070,36 @@ Case ("tloc").
      apply t_loc. inversion H6. subst. apply H5. apply sub_refl. apply subt_ref. apply joins_subtyping_1. apply subsum_r_trans with (a:=b0)(b:=x2)(c:=s). apply H9. inversion H15. apply H16.
 Qed.
 
+Lemma has_type_joinvs_b_al:forall pc HT t T b Gamma,
+value t ->
+has_type pc Gamma HT t T ->
+has_type pc Gamma HT (joinvs t b) (joinTs T b).
+Proof.
+intros. inversion H0.
+Case ("tcon").
+     intros. rewrite->join_tcon_b. subst. apply inversion_tcon in H1. inversion H1. inversion H2. inversion H3. inversion H4. inversion H6.
+     inversion H8. subst. destruct T. destruct r. rewrite->joinTs_b. apply t_sub with (pc:=pc)(T:=an int (joins b0 b)). apply t_con. apply sub_refl.
+     apply subt_int. apply joins_subtyping_1. apply subsum_r_trans with (a:=b0)(b:=x1)(c:=s). apply H9. inversion H10. apply H11.  inversion H10.
+     inversion H10. inversion H10.
+Case ("tabs").
+     intros. rewrite->join_tabs_b. subst. apply inversion_tabs in H1. inversion H1. inversion H2. inversion H3. inversion H4. inversion H5. inversion H6.
+     inversion H7. inversion H8. inversion H10. inversion H12. inversion H14. inversion H16. inversion H18. inversion H20. destruct T. destruct r. inversion H22.
+     rewrite->joinTs_b. apply t_sub with (pc:=pc)(T:=an (fn t s0 t0) (joins b0 b)). apply t_sub with (pc:=pc)(T:=an (fn x s0 t0) (joins b0 b)).
+     apply t_sub with (pc:=pc)(T:=an (fn T0 s0 t0)(joins b0 b)). apply t_abs. apply t_sub with (pc:=x4)(T:=x1). apply t_sub with (pc:=x3)(T:=x0).
+     apply H11. inversion H13. apply sub_refl. apply sub_LH. apply H19. inversion H22. apply H32. inversion H22. apply H34. apply sub_refl. apply subt_fn. apply sub_refl.
+     apply sub_refl. apply H17. apply subtyping_refl. apply sub_refl. apply subt_fn. apply sub_refl. apply sub_refl. inversion H22. apply H33. apply subtyping_refl. apply sub_refl.
+     apply subt_fn. apply joins_subtyping_1. apply subsum_r_trans with (a:=b0)(b:=x5)(c:=s). apply H21. inversion H22. apply H28. apply sub_refl. apply subtyping_refl. apply subtyping_refl.
+     inversion H22. inversion H22.
+Case ("tunit").
+     intros. rewrite->join_tunit_b. subst. apply inversion_tunit in H1. inversion H1. inversion H2. inversion H3. inversion H4. inversion H6. inversion H8. subst. destruct T. destruct r. inversion H10.
+     inversion H10. rewrite->joinTs_b. apply t_sub with (pc:=pc)(T:=an unit (joins b0 b)). apply t_unit. apply sub_refl. apply subt_unit. apply joins_subtyping_1. apply subsum_r_trans with (a:=b0)(b:=x1)(c:=s).
+     apply H9. inversion H10. apply H11. inversion H10.
+Case ("tloc").
+     intros. rewrite->join_tloc_b. subst. apply inversion_tloc in H1. inversion H1. inversion H2. inversion H3. inversion H4. inversion H5. inversion H7. inversion H9.
+     inversion H11. inversion H13. subst. destruct T. destruct r. inversion H15. inversion H15. inversion H15. rewrite->joinTs_b. inversion H15. subst. apply t_sub with (pc:=pc)(T:=an (ref t)(joins b0 b)).
+     apply t_loc. inversion H6. subst. apply H5. apply sub_refl. apply subt_ref. apply joins_subtyping_1. apply subsum_r_trans with (a:=b0)(b:=x2)(c:=s). apply H9. inversion H15. apply H16.
+Qed.
+
 Lemma l_lt_hp:forall (T:Type)(l:nat) (hp:list T),
 l <= length hp ->
 l <> length hp ->
@@ -2270,6 +2300,53 @@ Case ("t_assign").
 Case ("t_sub"). 
       intros. apply IHhas_type in H5. inversion H5. exists x. split. apply H6. split. apply t_sub with (pc:=pc)(T:=T). apply H6. apply H1. apply H2. apply H6. apply Heqcontext. apply subsum_r_trans with (a:=PC)(b:=pc')(c:=pc). apply H3. apply H1. apply H4.
 Qed.
+
+(*type preservation:alternative*)
+Theorem preservation_al:forall pc PC HT t t' T hp hp' Gamma,
+has_type pc Gamma HT t T ->
+heap_well_typed HT hp ->
+t / hp ==PC=> t' / hp' ->
+subsum_r PC pc ->
+exists HT',
+(extends HT' HT /\
+has_type pc Gamma HT' t' T /\
+heap_well_typed HT' hp').
+Proof.
+intros. generalize dependent hp.
+generalize dependent hp'. generalize dependent t'. generalize dependent PC.
+induction H0. 
+Case ("t_var").
+     intros. inversion H2.
+Case ("t_con").
+     intros. inversion H2.
+Case ("t_unit").
+     intros. inversion H2.
+Case ("t_loc").
+     intros. inversion H2.
+Case ("t_abs"). 
+     intros. inversion H2. 
+Case ("t_prot").
+     intros. inversion H4. subst. apply IHhas_type in H13. inversion H13. exists x.
+     split. apply H1. split. apply t_prot with (T:=T). apply H1. reflexivity. apply H1.
+     apply joins_subtyping_1. apply H3. apply H2. 
+     subst. exists HT. split. apply extends_refl. split. apply value_pc with (pc:=joins pc b).
+     apply value_b. apply H13. apply has_type_joinvs_b_al. apply H13. apply H0. apply H2.
+Case ("t_app").
+     intros. inversion H2. subst. exists HT. split. apply extends_refl. split. apply inversion_tabs in H0_. inversion H0_. inversion H0. inversion H4. inversion H5. inversion H6. inversion H7. inversion H8.
+     inversion H9. inversion H15. inversion H17. inversion H19. inversion H21. inversion H23. inversion H25.
+     apply t_sub with (pc:=pc)(T:=joinTs T2 x6). apply t_sub with (pc:=pc)(T:=joinTs T2 b0). apply t_prot with (T:=T2).
+     apply t_sub with (pc:=x5)(T:=T2). apply t_sub with (pc:=x4)(T:=T2). apply t_sub with (pc:=x4)(T:=x2). apply t_sub with (pc:=x4)(T:=x1). apply value_pc with (pc':=x4) in H0_0.
+     apply t_sub with (pc':=x4)(T':=x0)in H0_0. apply t_sub with (pc':=x4)(T':=T) in H0_0. apply substitution_preserves_typing with (T1:=T). apply H13.
+     (*we are stuck here*)
+     (**
+     Note that [has_type x4 Gamma HT t2 T] can never imply [has_type x4 empty_context HT t2 T].
+     This is the reason why in [preservation] we do not consider cases where the term
+     before reduction contains any free variables
+     *)
+     admit.
+Admitted.
+
+
 (*generalization of preservation*)
 Theorem type_uniqueness:forall x z PC pc HT T,
         has_type pc empty_context HT (fst x) T ->
